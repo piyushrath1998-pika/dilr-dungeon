@@ -1,0 +1,856 @@
+import { useState, useEffect, useCallback } from "react";
+
+// ─── PRE-COMPUTED STARS ───────────────────────────────────────────────────────
+const STARS = Array.from({length:60},(_,i)=>{
+  const s=(i*2654435761)>>>0,r=(n)=>((s*n)%1000)/1000;
+  return{top:r(1)*70,left:r(7)*100,w:r(13)*2+1,h:r(17)*2+1,op:r(19)*.8+.2,delay:r(23)*3,dur:2+r(29)*2};
+});
+
+function shuffleOptions(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+// ─── COLOURS ──────────────────────────────────────────────────────────────────
+const C={
+  void:"#060a14",stone1:"#0d1220",stone2:"#141825",stone3:"#1e2535",
+  torch:"#d4863c",flame:"#f0a832",moon:"#b8c8e0",parchment:"#f2e8d4",
+  ink:"#1a1208",gold:"#c8a84b",goldLight:"#e8c96b",hp:"#c0392b",
+  xp:"#27ae60",correct:"#1e8449",wrong:"#922b21",mist:"#1a2d4a",
+  purple:"#7b68ee",purpleLight:"#a99cf0"
+};
+
+// ─── CSS ──────────────────────────────────────────────────────────────────────
+const css=`
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Courier+Prime&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:${C.void};overflow:hidden;}
+@keyframes flicker{0%,100%{opacity:1;transform:scaleY(1)}50%{opacity:.8;transform:scaleY(.93)}75%{opacity:.96}}
+@keyframes glow{0%,100%{box-shadow:0 0 20px ${C.torch},0 0 40px ${C.torch}40}50%{box-shadow:0 0 35px ${C.flame},0 0 70px ${C.torch}60}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+@keyframes pop{0%{transform:scale(.85);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+@keyframes slideUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes walkBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.flicker{animation:flicker 2s ease-in-out infinite}
+.glow-torch{animation:glow 2.5s ease-in-out infinite}
+.float{animation:float 3s ease-in-out infinite}
+.fade-in{animation:fadeIn .4s ease both}
+.shake{animation:shake .4s ease}
+.pop{animation:pop .3s ease both}
+.slide-up{animation:slideUp .45s ease both}
+.pulse{animation:pulse 1.8s ease infinite}
+.walk-bob{animation:walkBob .45s ease both}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.stone2}}
+::-webkit-scrollbar-thumb{background:${C.torch}80;border-radius:2px}
+`;
+
+// ─── GAME DATA ────────────────────────────────────────────────────────────────
+const LEVELS=[
+  {
+    id:1,name:"The Threshold",subtitle:"Entry Hall of Logic",
+    lore:"The dungeon gate opens. A mentor's voice echoes: 'Only those who see what others miss may descend deeper.'",
+    color:"#c8a84b",locked:false,
+    sets:[
+      {
+        id:"chess-queen",name:"The Queen's Eye",source:"CAT 2017 S2 · Q21-24",
+        shape:"Practice Reps",icon:"♟️",rooms:[
+          {id:0,type:"orient",title:"The Chessboard Scroll",icon:"📜",
+            text:"An 8×8 board lies before you. Columns are labelled a–h (left to right) and rows 1–8 (bottom to top). A queen can attack any piece in the same row, column, or diagonal — provided no piece blocks the path. Position 'c5' means column c, row 5.",
+            hint:"The queen is blocked by any piece sitting between her and her target.",
+            example:"Queen at c5 attacks a piece at e7 (NE diagonal) only if d6 is empty."},
+          {id:1,type:"question",checkpoint:true,title:"Room I — The Guarded Pieces",icon:"⚔️",
+            question:"The queen is at c5. Other pieces sit at c2, g1, g3, g5 and a3. No other pieces exist. How many are under attack by the queen?",
+            options:["5","3","4","2"],correct:"4",xp:60,gold:15,
+            illustration:"chess-q1",
+            explanation:"Queen at c5 attacks: c2 (same column, clear), g1 (SE diagonal d4→e3→f2→g1, clear), g5 (same row, clear), a3 (SW diagonal b4→a3, clear). g3 shares no row, column or diagonal with c5 — not attacked."},
+          {id:2,type:"question",title:"Room II — The Optimal Position",icon:"⚔️",
+            question:"Pieces are at a1, a3, b4, d7, h7 and h8. Which queen position attacks the MOST pieces?",
+            options:["b2","d4","a7","e5"],correct:"b2",xp:70,gold:20,
+            illustration:"chess-q2",
+            explanation:"From b2: attacks b4 (column), a3 (NW diagonal), a1 (SW diagonal), h8 (NE diagonal c3→d4→e5→f6→g7→h8) = 4 pieces. d4 and a7 each reach only 3."},
+          {id:3,type:"question",title:"Room III — The Blind Squares",icon:"⚔️",
+            question:"Same setup: pieces at a1, a3, b4, d7, h7, h8. From how many board positions can the queen NOT attack any of the six pieces?",
+            options:["8","12","20","4"],correct:"4",xp:80,gold:25,
+            illustration:"chess-q3",
+            explanation:"The queen must avoid rows 1,3,4,7,8 and cols a,b,d,h. Only 12 squares remain (cols c,e,f,g × rows 2,5,6). Eliminating those on any piece's diagonal leaves exactly 4 safe positions."},
+          {id:4,type:"question",boss:true,title:"⚡ BOSS — The Lone Queen",icon:"👑",
+            question:"The queen is the ONLY piece on the board, placed at d5. In how many positions can another piece be placed so it is SAFE from the queen's attack?",
+            options:["27","36","20","39"],correct:"36",xp:120,gold:50,
+            illustration:"chess-boss",
+            explanation:"Queen at d5 covers 7 squares in row 5, 7 in col d, and 13 diagonal squares = 27. Safe squares = 63 − 27 = 36."}
+        ]
+      },
+      {
+        id:"fingerprint",name:"The Passkey Cipher",source:"CAT 2017 S2 · Q29-32",
+        shape:"Concept Ladder",icon:"🖐️",rooms:[
+          {id:0,type:"orient",title:"The Security Codex",icon:"📜",
+            text:"A high-security lab requires a 5-finger scan sequence (T=Thumb, I=Index, M=Middle, R=Ring, L=Little). The original scan order must be reproduced to re-enter. The lab is considering relaxations since employees keep getting locked out.",
+            hint:"Think of 5 fingers as a fixed ordered sequence. 'Out of place' means a finger is NOT in its original position.",
+            example:"Original: TIMRL. Sequence TLMRI has T and L out of place (2 swapped) — allowed under the 2-swap rule."},
+          {id:1,type:"question",checkpoint:true,title:"Room I — The Two-Swap Rule",icon:"⚔️",
+            question:"The lab allows at most 2 scans (out of 5) to be 'out of place'. How many different sequences are allowed for any given original?",
+            options:["16","14","11","12"],correct:"14",xp:70,gold:20,
+            illustration:"fingers-q1",
+            explanation:"Sequences with 0 out-of-place: 1 (original). With exactly 2: C(5,2) = 10 transpositions. Total = 1 + 10 + 3 = 14."},
+          {id:2,type:"question",title:"Room II — The One-Shift Rule",icon:"⚔️",
+            question:"NEW RULE: Each individual finger may shift by AT MOST one position from its original spot. How many sequences are allowed?",
+            options:["8","12","16","14"],correct:"14",xp:80,gold:25,
+            illustration:"fingers-q2",
+            explanation:"Count permutations of {1,2,3,4,5} where each element moves ≤1 step. Fibonacci-like recurrence gives 14 valid sequences."},
+          {id:3,type:"question",title:"Room III — Six Scans",icon:"⚔️",
+            question:"NEW RULE: 6 scans required — one finger scanned twice, others once. At most 2 scans out of place, with the doubled finger still doubled. How many sequences are allowed?",
+            options:["15","18","28","12"],correct:"15",xp:90,gold:30,
+            illustration:"fingers-q3",
+            explanation:"For a 6-scan sequence with one repeated finger: count arrangements with ≤2 positions out-of-place. The official CAT answer is 15."},
+          {id:4,type:"question",boss:true,title:"⚡ BOSS — LRLTIM Decoded",icon:"👑",
+            question:"6-scan sequence with one-position shift rule. The original sequence is LRLTIM. How many sequences are allowed?",
+            options:["8","6","7","9"],correct:"7",xp:130,gold:55,
+            illustration:"fingers-boss",
+            explanation:"With LRLTIM as original (L appears twice) and each scan ≤1 position shift: enumerate valid permutations. The official CAT answer is 7."}
+        ]
+      }
+    ]
+  },
+  {
+    id:2,name:"The Archive",subtitle:"Hall of Records",
+    lore:"Stone stairs descend into deeper shadow. A herald warns: 'The scrolls here carry more weight. Think before you ink.'",
+    color:"#7b68ee",locked:false,
+    sets:[
+      {
+        id:"purity-bottles",name:"Vials of Truth",source:"CAT 2021 S3 · Q1-4",
+        shape:"Practice Reps",icon:"⚗️",rooms:[
+          {id:0,type:"orient",title:"The Alchemist's Rule",icon:"📜",
+            text:"Each bottle holds 50ml — either 100% pure (P) or impure (I). A detector flags impurity only if the tested mixture is ≥10% impure. You cannot distinguish P from I by sight. Mix samples and test strategically.",
+            hint:"Key: 10% threshold on the MIXTURE, not the original bottle.",
+            example:"10ml pure + 20ml (20% impure) = 4ml in 30ml = 13.3% → detected. But 10ml pure + 5ml (20% impure) = 1ml in 15ml = 6.7% → not detected."},
+          {id:1,type:"question",checkpoint:true,title:"Room I — The Certain Bottle",icon:"⚔️",
+            question:"5ml from bottle A (known pure) is mixed with 5ml from bottle B. The test DETECTS impurity. What is the BEST conclusion about bottle B's impurity volume?",
+            options:["≥10ml","=10ml",">5ml","≥5ml"],correct:"≥5ml",xp:70,gold:25,
+            illustration:"bottles-q1",
+            explanation:"Impurity in 10ml mixture ≥10% → ≥1ml came from B's 5ml. B is ≥20% impure → ≥10ml in full bottle. Best conclusion: ≥5ml from 5ml sample = ≥5ml."},
+          {id:2,type:"question",title:"Room II — Four Bottles, All or Nothing",icon:"⚔️",
+            question:"Four bottles each contain ONLY P or ONLY I. They're 'ready for dispatch' only if ALL contain P. What is the MINIMUM tests to confirm dispatch-readiness?",
+            options:["4","3","2","5"],correct:"3",xp:80,gold:30,
+            illustration:"bottles-q2",
+            explanation:"Mix B1+B2 (Test 1). If impure → test B1 (Test 2), result tells you which; Test 3 for the other pair. If pure → test B3 (Test 2), test B4 (Test 3). Always 3 tests."},
+          {id:3,type:"question",title:"Room III — Three Pure, One Impure",icon:"⚔️",
+            question:"Four bottles: exactly 3 contain only P, one contains 80% P + 20% I. Minimum tests to DEFINITELY identify the impure bottle?",
+            options:["3","1","2","4"],correct:"2",xp:90,gold:35,
+            illustration:"bottles-q3",
+            explanation:"Test 1: mix 5ml B1 + 5ml B2. If detected → test B1 alone (Test 2) → identified. If not → B1,B2 pure → test B3 alone (Test 2). Always 2 tests."},
+          {id:4,type:"question",boss:true,title:"⚡ BOSS — The Unknown Count",icon:"👑",
+            question:"Four bottles: either 1 OR 2 contain only P; the rest contain 85% P + 15% I. Minimum tests to determine the EXACT NUMBER of pure bottles?",
+            options:["2","3","1","4"],correct:"2",xp:140,gold:60,
+            illustration:"bottles-boss",
+            explanation:"Test 1: mix 5ml from all 4 (20ml). 1 pure: 11.25% impurity → detected. 2 pure: 7.5% → not detected. Test 1 reveals the count! Test 2 identifies which. Minimum = 2."}
+        ]
+      },
+      {
+        id:"atm-notes",name:"Treasury of Notes",source:"CAT 2018 S1 · Q5-8",
+        shape:"Concept Ladder",icon:"💰",rooms:[
+          {id:0,type:"orient",title:"The Counting Chamber",icon:"📜",
+            text:"An ATM dispenses exactly ₹5000 per withdrawal using ₹100, ₹200 and ₹500 notes. Customers state their preferred denomination. The ATM ensures the count of preferred notes STRICTLY EXCEEDS the total count of all other notes.",
+            hint:"If x = preferred notes, y+z = others: need x > y+z. Also 500x+200y+100z=5000 for ₹500 preference.",
+            example:"x=10×₹500, y=0, z=0: 10 > 0 ✓. Or x=9×₹500 + y=2×₹200 + z=1×₹100: 9 > 3 ✓."},
+          {id:1,type:"question",checkpoint:true,title:"Room I — Ways to Serve",icon:"⚔️",
+            question:"How many different ways can the ATM serve a customer who prefers ₹500 notes?",
+            options:["7","6","8","10"],correct:"7",xp:80,gold:30,
+            illustration:"atm-q1",
+            explanation:"5x+2y+z=50, x>y+z. x=10: 1 way. x=9: 3 ways. x=8: 3 ways. x≤7: invalid. Total = 7."},
+          {id:2,type:"question",title:"Room II — The 50-Note Stock",icon:"⚔️",
+            question:"NEW: ATM has exactly 50 five-hundred rupee notes, unlimited others. Max customers among 10 who could have preferred ₹500?",
+            options:["7","8","6","5"],correct:"6",xp:90,gold:35,
+            illustration:"atm-q2",
+            explanation:"Minimum ₹500 notes per customer = 8. 50 ÷ 8 = 6.25 → at most 6. With 6 customers at x=8: 48 notes used, 2 left — not enough for a 7th."},
+          {id:3,type:"question",title:"Room III — The 20-Note Cap",icon:"⚔️",
+            question:"NEW: 50 five-hundred notes, unlimited others, at most 20 notes per withdrawal. Max TOTAL customers ATM can serve?",
+            options:["62","505","55","70"],correct:"505",xp:100,gold:40,
+            illustration:"atm-q3",
+            explanation:"Detailed casework on 500/200/100 preference types with the 20-note cap yields 505 maximum total customers from the 50-note stock."},
+          {id:4,type:"question",boss:true,title:"⚡ BOSS — The Grand Ledger",icon:"👑",
+            question:"50 customers prefer ₹500 AND 50 prefer ₹100. Minimize total notes. How many ₹500 notes are needed?",
+            options:["500","800","900","750"],correct:"750",xp:150,gold:65,
+            illustration:"atm-boss",
+            explanation:"500-preferring: min notes = x=10 per customer → 50×10=500 five-hundreds. 100-preferring: use 500s as filler to minimize count → 250 more five-hundreds. Total: 750."}
+        ]
+      }
+    ]
+  }
+];
+
+// ─── QUESTION ILLUSTRATIONS (SVG) ────────────────────────────────────────────
+function QuestionIllustration({id}){
+  if(!id) return null;
+
+  // Chess board helper
+  const ChessBoard=({qMark,pieces=[],highlight=[]})=>{
+    const cols="abcdefgh",rows=[8,7,6,5,4,3,2,1];
+    const toXY=(sq)=>{const c=cols.indexOf(sq[0]),r=rows.indexOf(parseInt(sq[1]));return{x:c,y:r}};
+    return(
+      <svg width="160" height="160" viewBox="0 0 168 168" style={{margin:"0 auto",display:"block",borderRadius:4,boxShadow:"0 2px 8px #0006"}}>
+        <rect width="168" height="168" fill="#3d2b1f" rx="3"/>
+        {rows.map((r,ri)=>cols.split("").map((c,ci)=>{
+          const sq=c+r;
+          const isHL=highlight.includes(sq);
+          return <rect key={sq} x={ci*20+4} y={ri*20+4} width="20" height="20"
+            fill={isHL?"#27ae6060":((ri+ci)%2===0?"#f0d9b5":"#b58863")} stroke={isHL?"#27ae60":"none"} strokeWidth="1.5"/>
+        }))}
+        {pieces.map(({sq,type,color})=>{
+          const {x,y}=toXY(sq);
+          return <text key={sq} x={x*20+14} y={y*20+19} fontSize="14" textAnchor="middle"
+            fill={color==="w"?"#fff":"#222"} stroke={color==="w"?"#222":"#fff"} strokeWidth="0.3"
+            style={{filter:"drop-shadow(0 1px 2px #0009)"}}>{type}</text>
+        })}
+        {qMark&&<>
+          <rect x={qMark.x*20+4} y={qMark.y*20+4} width="20" height="20" fill="#e74c3c60" rx="1"/>
+          <text x={qMark.x*20+14} y={qMark.y*20+19} fontSize="12" textAnchor="middle" fill="#e74c3c" fontWeight="bold">?</text>
+        </>}
+        {cols.split("").map((c,i)=><text key={"col"+c} x={i*20+13} y={167} fontSize="7" textAnchor="middle" fill="#c8a84b80">{c}</text>)}
+        {rows.map((r,i)=><text key={"row"+r} x={2} y={i*20+17} fontSize="7" textAnchor="middle" fill="#c8a84b80">{r}</text>)}
+      </svg>
+    );
+  };
+
+  // Finger sequence helper
+  const FingerSeq=({sequences,labels})=>(
+    <svg width="200" height={sequences.length*36+20} viewBox={`0 0 200 ${sequences.length*36+20}`} style={{display:"block",margin:"0 auto"}}>
+      {sequences.map((seq,si)=>(
+        <g key={si} transform={`translate(0,${si*36+4})`}>
+          {labels&&<text x="2" y="20" fontSize="9" fill={C.moon}>{labels[si]}</text>}
+          {seq.map((f,fi)=>(
+            <g key={fi} transform={`translate(${(labels?30:10)+fi*32},0)`}>
+              <rect width="28" height="28" rx="4" fill={f.hl?"#27ae6030":f.wrong?"#e74c3c20":C.stone3} stroke={f.hl?"#27ae60":f.wrong?"#e74c3c":C.stone3} strokeWidth="1.5"/>
+              <text x="14" y="19" fontSize="12" textAnchor="middle" fill={f.hl?C.xp:f.wrong?C.hp:C.moon} fontWeight={f.hl?"bold":"normal"}>{f.l}</text>
+            </g>
+          ))}
+        </g>
+      ))}
+    </svg>
+  );
+
+  // Bottle helper
+  const Bottles=({bottles})=>(
+    <svg width="200" height="80" viewBox="0 0 200 80" style={{display:"block",margin:"0 auto"}}>
+      {bottles.map((b,i)=>(
+        <g key={i} transform={`translate(${i*46+8},4)`}>
+          <rect x="8" y="0" width="6" height="10" rx="1" fill="#5a7a6a" stroke="#2a4a3a" strokeWidth="1"/>
+          <rect x="2" y="10" width="18" height="54" rx="4" fill={b.type==="P"?"#e8f8f0":b.type==="I"?"#fde8e8":"#f8f8e8"}
+            stroke={b.type==="P"?"#27ae60":b.type==="I"?"#e74c3c":"#c8a84b"} strokeWidth="1.5"/>
+          {b.fill&&<rect x="2" y={10+(54*(1-b.fill))} width="18" height={54*b.fill} rx="2"
+            fill={b.type==="P"?"#27ae6040":"#e74c3c40"}/>}
+          <text x="11" y="44" fontSize="11" textAnchor="middle" fill={b.type==="P"?"#1a5a30":b.type==="I"?"#7a1a1a":"#5a4a10"} fontWeight="bold">{b.label||b.type}</text>
+          <text x="11" y="74" fontSize="9" textAnchor="middle" fill={C.moon}>{b.name}</text>
+        </g>
+      ))}
+    </svg>
+  );
+
+  // ATM notes helper
+  const ATMNotes=({stacks})=>(
+    <svg width="200" height="80" viewBox="0 0 200 80" style={{display:"block",margin:"0 auto"}}>
+      <rect x="4" y="20" width="192" height="52" rx="6" fill={C.stone2} stroke={C.stone3} strokeWidth="1.5"/>
+      <text x="100" y="14" textAnchor="middle" fontSize="9" fill={C.moon}>ATM DISPENSER</text>
+      <rect x="4" y="20" width="192" height="14" rx="4" fill={C.stone3}/>
+      <text x="100" y="31" textAnchor="middle" fontSize="8" fill={C.gold}>PREFERRED COUNT MUST EXCEED OTHERS</text>
+      {stacks.map((st,i)=>(
+        <g key={i} transform={`translate(${i*60+14},36)`}>
+          {[...Array(Math.min(st.count,5))].map((_,j)=>(
+            <rect key={j} x={j*1.5} y={-j*2} width="44" height="20" rx="2"
+              fill={st.pref?"#27ae6020":"#c8a84b20"} stroke={st.pref?"#27ae60":"#c8a84b"} strokeWidth="1"/>
+          ))}
+          <text x="22" y="14" textAnchor="middle" fontSize="10" fill={st.pref?C.xp:C.gold} fontWeight="bold">₹{st.denom}</text>
+          <text x="22" y="30" textAnchor="middle" fontSize="8" fill={C.moon}>×{st.count}</text>
+          {st.pref&&<text x="22" y="40" textAnchor="middle" fontSize="7" fill={C.xp}>PREFERRED</text>}
+        </g>
+      ))}
+    </svg>
+  );
+
+  const M={
+    "chess-q1":<ChessBoard pieces={[{sq:"c5",type:"♛",color:"w"},{sq:"c2",type:"♟",color:"b"},{sq:"g1",type:"♟",color:"b"},{sq:"g3",type:"♟",color:"b"},{sq:"g5",type:"♟",color:"b"},{sq:"a3",type:"♟",color:"b"}]} highlight={["c2","g5","a3","g1"]}/>,
+    "chess-q2":<ChessBoard pieces={[{sq:"a1",type:"♟",color:"b"},{sq:"a3",type:"♟",color:"b"},{sq:"b4",type:"♟",color:"b"},{sq:"d7",type:"♟",color:"b"},{sq:"h7",type:"♟",color:"b"},{sq:"h8",type:"♟",color:"b"}]} qMark={{x:1,y:6}} highlight={["b2"]}/>,
+    "chess-q3":<ChessBoard pieces={[{sq:"a1",type:"♟",color:"b"},{sq:"a3",type:"♟",color:"b"},{sq:"b4",type:"♟",color:"b"},{sq:"d7",type:"♟",color:"b"},{sq:"h7",type:"♟",color:"b"},{sq:"h8",type:"♟",color:"b"}]} highlight={["e2","f2","g2","g5"]}/>,
+    "chess-boss":<ChessBoard pieces={[{sq:"d5",type:"♛",color:"w"}]} highlight={["d1","d2","d3","d4","d6","d7","d8","a5","b5","c5","e5","f5","g5","h5"]}/>,
+    "fingers-q1":<FingerSeq labels={["Original","Swap1","Swap2","Swap3"]} sequences={[
+      [{l:"T"},{l:"I"},{l:"M"},{l:"R"},{l:"L"}],
+      [{l:"I",hl:true},{l:"T",hl:true},{l:"M"},{l:"R"},{l:"L"}],
+      [{l:"T"},{l:"I"},{l:"R",hl:true},{l:"M",hl:true},{l:"L"}],
+      [{l:"L",hl:true},{l:"I"},{l:"M"},{l:"R"},{l:"T",hl:true}],
+    ]}/>,
+    "fingers-q2":<FingerSeq labels={["Original","≤1 shift","≤1 shift","Invalid"]} sequences={[
+      [{l:"T"},{l:"I"},{l:"M"},{l:"R"},{l:"L"}],
+      [{l:"I",hl:true},{l:"T",hl:true},{l:"M"},{l:"R"},{l:"L"}],
+      [{l:"T"},{l:"M",hl:true},{l:"I",hl:true},{l:"R"},{l:"L"}],
+      [{l:"L",wrong:true},{l:"I"},{l:"M"},{l:"R"},{l:"T",wrong:true}],
+    ]}/>,
+    "fingers-q3":<FingerSeq labels={["Original","Valid","Valid"]} sequences={[
+      [{l:"L"},{l:"R"},{l:"L"},{l:"T"},{l:"I"},{l:"M"}],
+      [{l:"R",hl:true},{l:"L",hl:true},{l:"L"},{l:"T"},{l:"I"},{l:"M"}],
+      [{l:"L"},{l:"L",hl:true},{l:"R",hl:true},{l:"T"},{l:"I"},{l:"M"}],
+    ]}/>,
+    "fingers-boss":<FingerSeq labels={["Original","✓ Valid","✓ Valid","✗ Invalid"]} sequences={[
+      [{l:"L"},{l:"R"},{l:"L"},{l:"T"},{l:"I"},{l:"M"}],
+      [{l:"R",hl:true},{l:"L",hl:true},{l:"L"},{l:"T"},{l:"I"},{l:"M"}],
+      [{l:"L"},{l:"L",hl:true},{l:"R",hl:true},{l:"T"},{l:"I"},{l:"M"}],
+      [{l:"M",wrong:true},{l:"R"},{l:"L"},{l:"T"},{l:"I"},{l:"L",wrong:true}],
+    ]}/>,
+    "bottles-q1":<Bottles bottles={[{type:"P",fill:.8,name:"A (pure)",label:"P"},{type:"?",fill:.5,name:"B (?)",label:"?"},{type:"mix",fill:.6,name:"Mixture",label:"10ml"}]}/>,
+    "bottles-q2":<Bottles bottles={[{type:"?",fill:.7,name:"B1",label:"?"},{type:"?",fill:.7,name:"B2",label:"?"},{type:"?",fill:.7,name:"B3",label:"?"},{type:"?",fill:.7,name:"B4",label:"?"}]}/>,
+    "bottles-q3":<Bottles bottles={[{type:"P",fill:.8,name:"B1",label:"P"},{type:"P",fill:.8,name:"B2",label:"P"},{type:"P",fill:.8,name:"B3",label:"P"},{type:"I",fill:.8,name:"B4",label:"I"}]}/>,
+    "bottles-boss":<Bottles bottles={[{type:"P",fill:.8,name:"Pure",label:"P"},{type:"I",fill:.6,name:"85%P",label:"I"},{type:"I",fill:.6,name:"85%P",label:"I"},{type:"I",fill:.6,name:"85%P",label:"I"}]}/>,
+    "atm-q1":<ATMNotes stacks={[{denom:500,count:9,pref:true},{denom:200,count:2,pref:false},{denom:100,count:1,pref:false}]}/>,
+    "atm-q2":<ATMNotes stacks={[{denom:500,count:8,pref:true},{denom:200,count:1,pref:false},{denom:100,count:3,pref:false}]}/>,
+    "atm-q3":<ATMNotes stacks={[{denom:500,count:5,pref:true},{denom:200,count:8,pref:false},{denom:100,count:5,pref:false}]}/>,
+    "atm-boss":<ATMNotes stacks={[{denom:500,count:10,pref:true},{denom:200,count:0,pref:false},{denom:100,count:26,pref:true}]}/>,
+  };
+
+  const el=M[id];
+  if(!el) return null;
+  return(
+    <div style={{background:"#f5efe0",borderRadius:8,padding:"10px",marginBottom:10,
+      border:"1.5px solid #c8a84b60",boxShadow:"0 2px 8px #0002"}}>
+      {el}
+    </div>
+  );
+}
+
+// ─── ROOM GRAPH ───────────────────────────────────────────────────────────────
+const ROOM_NODES={
+  entry:{x:50,y:78,kind:"entry"},
+  sw:{x:22,y:55,kind:"corner",qIdx:1,label:"SW"},
+  se:{x:78,y:55,kind:"corner",qIdx:2,label:"SE"},
+  nw:{x:22,y:28,kind:"corner",qIdx:3,label:"NW"},
+  ne:{x:78,y:28,kind:"corner",qIdx:4,label:"NE"},
+  exit:{x:50,y:10,kind:"exit"},
+};
+const ROOM_ADJ={
+  entry:{left:"sw",right:"se"},
+  sw:{up:"nw",right:"se",down:"entry"},
+  se:{up:"ne",left:"sw",down:"entry"},
+  nw:{down:"sw",right:"ne",up:"exit"},
+  ne:{down:"se",left:"nw",up:"exit"},
+  exit:{},
+};
+
+// ─── SMALL COMPONENTS ────────────────────────────────────────────────────────
+function HeartRow({lives,max=5}){
+  return <div style={{display:"flex",gap:3}}>{Array.from({length:max},(_,i)=>
+    <span key={i} style={{fontSize:14,filter:i<lives?"none":"grayscale(1) opacity(.3)",transition:"all .3s"}}>{i<lives?"❤️":"🖤"}</span>
+  )}</div>;
+}
+function XPBar({xp}){
+  const pct=Math.min(100,(xp/500)*100);
+  return <div style={{display:"flex",alignItems:"center",gap:6}}>
+    <span style={{fontFamily:"'Courier Prime'",color:C.xp,fontSize:12,minWidth:36}}>⚡{xp}</span>
+    <div style={{width:72,height:7,background:C.stone2,borderRadius:4,overflow:"hidden",border:`1px solid ${C.stone3}`}}>
+      <div style={{height:"100%",width:`${pct}%`,background:`linear-gradient(90deg,${C.xp},#58d68d)`,borderRadius:4,transition:"width .6s ease"}}/>
+    </div>
+  </div>;
+}
+function HUD({lives,xp,gold,cleared,total,setName,onHint,hintsLeft,color}){
+  return <div style={{position:"absolute",top:0,left:0,right:0,zIndex:50,padding:"8px 14px",
+    background:`linear-gradient(${C.stone1}ee,${C.stone1}00)`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+    <HeartRow lives={lives}/>
+    <div style={{textAlign:"center"}}>
+      <div style={{fontFamily:"'Cinzel'",color,fontSize:10,letterSpacing:2}}>{setName}</div>
+      <div style={{fontFamily:"'Courier Prime'",color:C.moon,fontSize:11}}>{"⚔".repeat(cleared)}{"·".repeat(Math.max(0,total-cleared))} {cleared}/{total}</div>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:10}}>
+      <XPBar xp={xp}/>
+      <span style={{fontFamily:"'Courier Prime'",color:C.gold,fontSize:13}}>🪙{gold}</span>
+      <button onClick={onHint} disabled={hintsLeft<=0} style={{fontFamily:"'Cinzel'",fontSize:10,padding:"3px 8px",
+        background:hintsLeft>0?`${C.torch}20`:C.stone2,border:`1px solid ${hintsLeft>0?C.torch:C.stone3}`,
+        color:hintsLeft>0?C.torch:C.stone3,borderRadius:3,cursor:hintsLeft>0?"pointer":"not-allowed"}}>
+        💡{hintsLeft}
+      </button>
+    </div>
+  </div>;
+}
+function OptionButton({label,onClick,state}){
+  const bg=state==="correct"?`${C.correct}25`:state==="wrong"?`${C.wrong}25`:"#fffaf0";
+  const border=state==="correct"?C.correct:state==="wrong"?C.wrong:"#c9b896";
+  return <button onClick={onClick} className={state?"pop":""}
+    style={{width:"100%",padding:"9px 12px",margin:"4px 0",textAlign:"left",cursor:state?"default":"pointer",
+      background:bg,border:`1.5px solid ${border}`,borderRadius:5,color:C.ink,
+      fontFamily:"'Crimson Text'",fontSize:14,fontWeight:600,transition:"all .2s",display:"flex",alignItems:"center",gap:7,
+      boxShadow:state==="correct"?`0 0 12px ${C.correct}50`:state==="wrong"?`0 0 12px ${C.wrong}50`:"0 1px 3px #0001"}}>
+    <span style={{fontFamily:"'Courier Prime'",fontSize:10,color:state==="correct"?C.correct:state==="wrong"?C.wrong:"#8a7550",minWidth:16}}>
+      {state==="correct"?"✓":state==="wrong"?"✗":"◇"}
+    </span>
+    {label}
+  </button>;
+}
+function ParchmentCard({children,animate}){
+  return <div className={animate?"slide-up":""} style={{
+    background:"radial-gradient(ellipse at 30% 20%,#f2e8d4,#e4d4b8)",
+    border:"2px solid #8b6914",borderRadius:7,padding:"16px 18px",
+    boxShadow:"0 4px 20px #00000070,inset 0 0 30px #c8a84b08",
+    position:"relative",maxHeight:"calc(100vh - 300px)",overflowY:"auto"}}>
+    <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,borderRadius:6,
+      background:"repeating-linear-gradient(0deg,transparent,transparent 27px,#c8a84b06 27px,#c8a84b06 28px)",
+      pointerEvents:"none"}}/>
+    {children}
+  </div>;
+}
+
+
+// Witch positions as % of the 220px-tall room container
+const NODE_POS={
+  entry:{left:"50%",top:"90%"},
+  sw:   {left:"18%",top:"68%"},
+  se:   {left:"82%",top:"68%"},
+  nw:   {left:"26%",top:"42%"},
+  ne:   {left:"74%",top:"42%"},
+  exit: {left:"50%",top:"18%"},
+};
+// Matching SVG coords for corner markers (viewBox 800×220)
+const NODE_SVG={
+  sw:{x:144,y:150}, se:{x:656,y:150},
+  nw:{x:210,y: 92}, ne:{x:590,y: 92},
+};
+
+function WitchSVG({accent}){
+  return(
+    <svg viewBox="-16 -38 32 50" width="52" height="72" style={{display:"block",overflow:"visible"}}>
+      <ellipse cx="0" cy="10" rx="12" ry="4" fill="#00000055"/>
+      <polygon points="0,-18 -10,8 10,8" fill="#4a1a8a" stroke="#2a0a5a" strokeWidth="0.7"/>
+      <polygon points="-10,8 -14,14 14,14 10,8" fill="#3a1070"/>
+      <circle cx="0" cy="-21" r="6" fill="#f5d5b0"/>
+      <rect x="-9" y="-25" width="18" height="3" rx="1.5" fill="#1a1a2a"/>
+      <polygon points="0,-38 -7,-24 7,-24" fill="#1a1a2a" stroke="#3a2a5a" strokeWidth="0.6"/>
+      <rect x="-7" y="-27" width="14" height="2.5" rx="1" fill={accent} opacity="0.75"/>
+      <circle cx="-2.2" cy="-21.5" r="1.3" fill="#a020f0"/>
+      <circle cx=" 2.2" cy="-21.5" r="1.3" fill="#a020f0"/>
+      <line x1="10" y1="-3" x2="18" y2="-17" stroke="#7a5a28" strokeWidth="1.4"/>
+      <circle cx="18" cy="-17" r="2.5" fill={accent} opacity="0.95"/>
+      <circle cx="18" cy="-17" r="4.5" fill={accent} opacity="0.2"/>
+    </svg>
+  );
+}
+
+function RoomScene({levelId,pos,cleared,allCleared,locked}){
+  const accent =levelId===1?C.torch:C.purple;
+  const floor  =levelId===1?"#2e1e12":"#1c1625";
+  const wall   =levelId===1?"#1c1108":"#14101e";
+  const wallMid=levelId===1?"#3c2a18":"#2c2038";
+  const panelC =levelId===1?"#4a3420":"#382850";
+  const witchPos=NODE_POS[pos];
+
+  return(
+    <div className={locked?"shake":""} style={{width:"100%",height:220,position:"relative",overflow:"hidden",flexShrink:0,background:wall}}>
+
+      {/* ── room SVG — fixed viewBox, xMidYMid meet = no skew ── */}
+      <svg width="100%" height="220" viewBox="0 0 800 220"
+        preserveAspectRatio="xMidYMid meet" style={{position:"absolute",inset:0,display:"block"}}>
+
+        {/* ceiling */}
+        <rect x="0" y="0" width="800" height="82" fill={wall}/>
+        {/* back wall */}
+        <rect x="55" y="14" width="690" height="68" fill={wallMid}/>
+        {[200,400,600].map(x=><line key={x} x1={x} y1="14" x2={x} y2="82" stroke={panelC} strokeWidth="2.5" opacity="0.55"/>)}
+        <rect x="55" y="75" width="690" height="6" fill={panelC} opacity="0.7"/>
+
+        {/* leaded window */}
+        <rect x="316" y="10" width="168" height="70" rx="5" fill="#253760"/>
+        <line x1="400" y1="10" x2="400" y2="80" stroke="#1a2840" strokeWidth="3.5"/>
+        <line x1="316" y1="46" x2="484" y2="46" stroke="#1a2840" strokeWidth="3.5"/>
+        <rect x="316" y="10" width="168" height="70" fill={accent} opacity="0.07"/>
+        <ellipse cx="400" cy="46" rx="95" ry="58" fill={accent} opacity="0.07"/>
+
+        {/* floor */}
+        <polygon points="0,82 800,82 800,220 0,220" fill={floor}/>
+        {[115,145,178,216].map(y=><line key={y} x1="0" y1={y} x2="800" y2={y} stroke="#ffffff06" strokeWidth="1.5"/>)}
+        {[0,100,200,300,400,500,600,700,800].map(x=><line key={x} x1={x} y1="220" x2="400" y2="82" stroke="#ffffff04" strokeWidth="1"/>)}
+
+        {/* left torch */}
+        <rect x="88" y="35" width="7" height="24" rx="2.5" fill="#5a3a18"/>
+        <ellipse cx="91" cy="33" rx="10" ry="14" fill={C.flame} opacity="0.9" className="flicker"/>
+        <ellipse cx="91" cy="45" rx="28" ry="24" fill={C.torch} opacity="0.15"/>
+
+        {/* right torch */}
+        <rect x="705" y="35" width="7" height="24" rx="2.5" fill="#5a3a18"/>
+        <ellipse cx="709" cy="33" rx="10" ry="14" fill={C.flame} opacity="0.9" className="flicker"/>
+        <ellipse cx="709" cy="45" rx="28" ry="24" fill={C.torch} opacity="0.15"/>
+
+        {/* corner markers */}
+        {(["sw","se","nw","ne"]).map(k=>{
+          const sv=NODE_SVG[k]; const n=ROOM_NODES[k]; const done=cleared[n.qIdx];
+          return <g key={k}>
+            <circle cx={sv.x} cy={sv.y} r="22" fill={done?C.xp+"35":accent+"25"} stroke={done?C.xp:accent} strokeWidth="3"/>
+            <text x={sv.x} y={sv.y+7} textAnchor="middle" fontSize="20" fill={done?C.xp:accent} fontWeight="bold">{done?"✓":"?"}</text>
+          </g>;
+        })}
+
+        {/* exit door */}
+        {allCleared&&<g>
+          <rect x="354" y="4" width="92" height="28" rx="6" fill={C.gold+"50"} stroke={C.gold} strokeWidth="2.5"/>
+          <text x="400" y="23" textAnchor="middle" fontSize="14" fill={C.gold} fontWeight="bold">EXIT ▲</text>
+        </g>}
+
+        {/* entry door */}
+        <rect x="354" y="206" width="92" height="14" rx="4" fill={accent+"30"} stroke={accent} strokeWidth="1.5"/>
+        <text x="400" y="217" textAnchor="middle" fontSize="10" fill={accent} letterSpacing="2">DOOR</text>
+      </svg>
+
+      {/* ── witch — absolutely positioned div, CSS left/top transitions work perfectly ── */}
+      <div style={{
+        position:"absolute",
+        left:witchPos.left,
+        top:witchPos.top,
+        transform:"translate(-50%,-100%)",
+        transition:"left .52s cubic-bezier(.3,.7,.4,1), top .52s cubic-bezier(.3,.7,.4,1)",
+        zIndex:10,
+        filter:`drop-shadow(0 6px 14px ${accent}aa)`,
+        animation:"walkBob 0.9s ease-in-out infinite",
+      }}>
+        <WitchSVG accent={accent}/>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── ARROW PAD ────────────────────────────────────────────────────────────────
+function ArrowPad({onMove,disabled,availDirs}){
+  const btn=(dir,lbl)=>{
+    const avail=availDirs[dir];
+    return <button onClick={()=>avail&&!disabled&&onMove(dir)}
+      style={{width:40,height:40,borderRadius:7,fontSize:16,
+        background:avail&&!disabled?`${C.torch}25`:C.stone2,
+        border:`1.5px solid ${avail&&!disabled?C.torch:C.stone3}`,
+        color:avail&&!disabled?C.gold:C.stone3,cursor:avail&&!disabled?"pointer":"default",
+        display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+      {lbl}
+    </button>;
+  };
+  return <div style={{display:"grid",gridTemplateColumns:"40px 40px 40px",gridTemplateRows:"40px 40px",gap:4,margin:"0 auto",width:"fit-content"}}>
+    <div/>{btn("up","▲")}<div/>
+    {btn("left","◀")}<div style={{width:40,height:40,borderRadius:7,background:C.stone1,border:`1px solid ${C.stone3}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🧭</div>{btn("right","▶")}
+    <div/>{btn("down","▼")}<div/>
+  </div>;
+}
+
+// ─── REWARD OVERLAY ──────────────────────────────────────────────────────────
+function RewardOverlay({xp,gold,isBoss,onContinue}){
+  return <div style={{position:"absolute",inset:0,zIndex:100,display:"flex",flexDirection:"column",
+    alignItems:"center",justifyContent:"center",background:"#00000085",backdropFilter:"blur(3px)"}}>
+    <div className="pop" style={{background:`linear-gradient(135deg,${C.stone2},${C.stone1})`,
+      border:`2px solid ${C.gold}`,borderRadius:10,padding:"28px 44px",textAlign:"center",
+      boxShadow:`0 0 50px ${C.gold}40`}}>
+      <div style={{fontSize:isBoss?40:30}}>{isBoss?"👑":"⚔️"}</div>
+      <div style={{fontFamily:"'Cinzel'",color:isBoss?C.gold:C.correct,fontSize:isBoss?20:16,margin:"8px 0",fontWeight:700}}>
+        {isBoss?"BOSS DEFEATED!":"CORNER CLEARED!"}
+      </div>
+      <div style={{display:"flex",gap:18,justifyContent:"center",margin:"12px 0"}}>
+        <span style={{fontFamily:"'Courier Prime'",color:C.xp,fontSize:15}}>+{xp} XP ⚡</span>
+        <span style={{fontFamily:"'Courier Prime'",color:C.gold,fontSize:15}}>+{gold} 🪙</span>
+      </div>
+      <button onClick={onContinue} style={{fontFamily:"'Cinzel'",fontSize:12,letterSpacing:2,padding:"9px 26px",
+        background:`linear-gradient(135deg,${C.torch},${C.gold})`,border:"none",color:C.ink,borderRadius:4,cursor:"pointer",fontWeight:700,marginTop:6}}>
+        CONTINUE →
+      </button>
+    </div>
+  </div>;
+}
+
+// ─── SET COMPLETE SCREEN ─────────────────────────────────────────────────────
+function SetCompleteScreen({set,level,xpEarned,goldEarned,onContinue}){
+  return <div style={{width:"100vw",height:"100vh",background:`radial-gradient(ellipse at 50% 40%,${C.mist}80,${C.void})`,
+    display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div className="pop" style={{textAlign:"center",maxWidth:400}}>
+      <div style={{fontSize:52,marginBottom:14}}>🏆</div>
+      <div style={{fontFamily:"'Cinzel'",color:level.color,fontSize:10,letterSpacing:4}}>SET COMPLETED</div>
+      <h2 style={{fontFamily:"'Cinzel'",color:C.parchment,fontSize:26,margin:"6px 0",textShadow:`0 0 18px ${level.color}80`}}>{set.name}</h2>
+      <div style={{fontFamily:"'Crimson Text'",fontStyle:"italic",color:C.moon,fontSize:13,marginBottom:22}}>{set.source}</div>
+      <div style={{display:"flex",gap:22,justifyContent:"center",marginBottom:26}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontFamily:"'Courier Prime'",color:C.xp,fontSize:22,fontWeight:700}}>+{xpEarned}</div>
+          <div style={{fontFamily:"'Cinzel'",color:C.moon,fontSize:8,letterSpacing:2}}>XP EARNED</div>
+        </div>
+        <div style={{width:1,background:C.stone3}}/>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontFamily:"'Courier Prime'",color:C.gold,fontSize:22,fontWeight:700}}>+{goldEarned}</div>
+          <div style={{fontFamily:"'Cinzel'",color:C.moon,fontSize:8,letterSpacing:2}}>GOLD FOUND</div>
+        </div>
+      </div>
+      <button onClick={onContinue} style={{fontFamily:"'Cinzel'",fontSize:13,letterSpacing:3,padding:"12px 32px",
+        background:`linear-gradient(135deg,${level.color},${C.gold})`,border:"none",color:C.ink,borderRadius:4,cursor:"pointer",fontWeight:700,
+        boxShadow:`0 0 22px ${level.color}50`}}>
+        RETURN TO MAP
+      </button>
+    </div>
+  </div>;
+}
+
+// ─── PUZZLE SCREEN ────────────────────────────────────────────────────────────
+function PuzzleScreen({level,set,onComplete,gs,setGs}){
+  const [pos,setPos]=useState("entry");
+  const [cleared,setCleared]=useState({});
+  const [showOrient,setShowOrient]=useState(true);
+  const [activeQ,setActiveQ]=useState(null);
+  const [chosen,setChosen]=useState(null);
+  const [showReward,setShowReward]=useState(false);
+  const [showHint,setShowHint]=useState(false);
+  const [moving,setMoving]=useState(false);
+  const [locked,setLocked]=useState(false);
+  const [xpSet,setXpSet]=useState(0);
+  const [goldSet,setGoldSet]=useState(0);
+  const [shaking,setShaking]=useState(false);
+  const [wrongAttempts,setWrongAttempts]=useState(0);
+  const [shuffledOpts,setShuffledOpts]=useState([]);
+  const [cooldownSec,setCooldownSec]=useState(0);
+
+  const orientRoom=set.rooms[0];
+  const questionRooms=set.rooms.slice(1);
+  const totalCorners=questionRooms.length;
+  const clearedCount=Object.keys(cleared).length;
+  const allCleared=clearedCount>=totalCorners;
+  const node=ROOM_NODES[pos];
+  const availDirs=Object.fromEntries(
+    Object.entries(ROOM_ADJ[pos]||{}).filter(([,dest])=>!(dest==="exit"&&!allCleared))
+  );
+
+  useEffect(()=>{if(activeQ){setShuffledOpts(shuffleOptions(activeQ.options));setWrongAttempts(0);setCooldownSec(0);}},[activeQ]);
+  useEffect(()=>{if(cooldownSec<=0)return;const t=setTimeout(()=>setCooldownSec(s=>Math.max(0,s-1)),1000);return()=>clearTimeout(t);},[cooldownSec]);
+
+  const handleMove=useCallback((dir)=>{
+    if(activeQ||moving||showOrient)return;
+    const next=ROOM_ADJ[pos]?.[dir];
+    if(!next)return;
+    if(next==="exit"&&!allCleared){setLocked(true);setTimeout(()=>setLocked(false),450);return;}
+    setMoving(true);
+    setPos(next);
+    setTimeout(()=>{
+      setMoving(false);
+      if(next==="exit"){onComplete(xpSet,goldSet);return;}
+      const n=ROOM_NODES[next];
+      if(n.kind==="corner"&&!cleared[n.qIdx]){setActiveQ(questionRooms[n.qIdx-1]);}
+    },520);
+  },[pos,activeQ,moving,showOrient,allCleared,cleared,questionRooms,onComplete,xpSet,goldSet]);
+
+  useEffect(()=>{
+    const fn=(e)=>{const m={ArrowUp:"up",ArrowDown:"down",ArrowLeft:"left",ArrowRight:"right"};if(m[e.key]){e.preventDefault();handleMove(m[e.key]);}};
+    window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);
+  },[handleMove]);
+
+  const handleAnswer=useCallback((opt)=>{
+    if(chosen||!activeQ||cooldownSec>0)return;
+    setChosen(opt);
+    if(opt===activeQ.correct){
+      const xp=activeQ.xp||60,gold=activeQ.gold||15;
+      setXpSet(x=>x+xp);setGoldSet(g=>g+gold);
+      setGs(s=>({...s,xp:s.xp+xp,gold:s.gold+gold}));
+      setTimeout(()=>setShowReward(true),600);
+    }else{
+      setShaking(true);setGs(s=>({...s,lives:Math.max(0,s.lives-1)}));
+      setTimeout(()=>setShaking(false),450);
+      setShuffledOpts(shuffleOptions(activeQ.options));
+      setWrongAttempts(n=>{const nx=n+1;if(nx%2===0)setCooldownSec(60);return nx;});
+    }
+  },[chosen,activeQ,setGs,cooldownSec]);
+
+  const handleRewardContinue=useCallback(()=>{
+    setShowReward(false);
+    setCleared(c=>({...c,[node.qIdx]:true}));
+    setActiveQ(null);setChosen(null);setShowHint(false);
+  },[node]);
+
+  const handleHint=useCallback(()=>{
+    if(gs.hintsLeft>0&&!showHint){setShowHint(true);setGs(s=>({...s,hintsLeft:s.hintsLeft-1}));}
+  },[gs.hintsLeft,showHint,setGs]);
+
+  return(
+    <div style={{width:"100vw",height:"100vh",display:"flex",flexDirection:"column",background:C.void,position:"relative"}}>
+      <HUD lives={gs.lives} xp={gs.xp} gold={gs.gold} cleared={clearedCount} total={totalCorners}
+        setName={set.name} onHint={handleHint} hintsLeft={gs.hintsLeft} color={level.color}/>
+      <div style={{marginTop:48,flexShrink:0}}>
+        <RoomScene levelId={level.id} pos={pos} cleared={cleared} allCleared={allCleared} locked={locked}/>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"8px 14px 14px",display:"flex",flexDirection:"column",gap:8,alignItems:"center"}}>
+        {showOrient&&(
+          <ParchmentCard animate>
+            <div style={{fontFamily:"'Cinzel'",color:"#8b5e1a",fontSize:9,letterSpacing:3,marginBottom:5}}>📜 SITUATION · {set.source}</div>
+            <h3 style={{fontFamily:"'Cinzel'",color:C.ink,fontSize:15,marginBottom:8}}>{orientRoom.title}</h3>
+            <p style={{fontFamily:"'Crimson Text'",color:C.ink,fontSize:13,lineHeight:1.6,marginBottom:10}}>{orientRoom.text}</p>
+            {orientRoom.example&&<div style={{background:"#c8a84b18",border:"1px solid #c8a84b40",borderRadius:4,padding:"7px 10px",
+              fontFamily:"'Crimson Text'",fontStyle:"italic",color:"#5a3e10",fontSize:12,marginBottom:10}}>
+              <strong>Example:</strong> {orientRoom.example}
+            </div>}
+            <button onClick={()=>setShowOrient(false)} style={{fontFamily:"'Cinzel'",fontSize:11,letterSpacing:2,padding:"8px 20px",
+              background:`linear-gradient(135deg,${C.torch},${C.gold})`,border:"none",color:C.ink,borderRadius:4,cursor:"pointer",fontWeight:700}}>
+              BEGIN EXPLORING →
+            </button>
+          </ParchmentCard>
+        )}
+        {!showOrient&&activeQ&&(
+          <ParchmentCard animate>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+              <div style={{fontFamily:"'Cinzel'",color:activeQ.boss?"#b8860b":"#8b5e1a",fontSize:9,letterSpacing:3}}>
+                {activeQ.boss?"👑 BOSS CHALLENGE":"⚔️ PUZZLE CORNER"}
+              </div>
+              {activeQ.checkpoint&&<span style={{padding:"2px 7px",background:"#27ae6020",border:"1px solid #27ae6060",
+                borderRadius:3,fontFamily:"'Courier Prime'",fontSize:8,color:C.xp}}>CHECKPOINT</span>}
+            </div>
+            <h3 style={{fontFamily:"'Cinzel'",color:C.ink,fontSize:activeQ.boss?16:14,marginBottom:8}}>{activeQ.title}</h3>
+            <QuestionIllustration id={activeQ.illustration}/>
+            <p className={shaking?"shake":""} style={{fontFamily:"'Crimson Text'",color:C.ink,fontSize:13,lineHeight:1.6,marginBottom:10}}>{activeQ.question}</p>
+            {showHint&&activeQ.explanation&&<div style={{background:"#3498db18",border:"1px solid #3498db40",borderRadius:4,padding:"7px 10px",
+              fontFamily:"'Crimson Text'",fontStyle:"italic",color:"#1a3a5c",fontSize:11,marginBottom:8}}>
+              💡 {activeQ.explanation.substring(0,110)}...
+            </div>}
+            <div>{shuffledOpts.map((opt,i)=>{
+              const state=chosen?(opt===activeQ.correct?"correct":opt===chosen?"wrong":null):null;
+              return <OptionButton key={i} label={opt} onClick={()=>handleAnswer(opt)} state={state}/>;
+            })}</div>
+            {chosen&&chosen!==activeQ.correct&&cooldownSec>0&&<div style={{marginTop:7,background:"#922b2115",border:"1px solid #922b2150",
+              borderRadius:4,padding:"9px 10px",fontFamily:"'Crimson Text'",color:"#7b1a1a",fontSize:12,textAlign:"center"}}>
+              <div style={{fontSize:18,marginBottom:2}}>⏳</div>
+              Too many missteps! Corner sealed.<br/>
+              <span style={{fontFamily:"'Courier Prime'",fontSize:17,color:C.hp,fontWeight:700}}>{cooldownSec}s</span>
+            </div>}
+            {chosen&&chosen!==activeQ.correct&&cooldownSec===0&&<div style={{marginTop:7,background:"#c0392b15",border:"1px solid #c0392b40",
+              borderRadius:4,padding:"7px 10px",fontFamily:"'Crimson Text'",color:"#7b1a1a",fontSize:12}}>
+              ✗ Lost a life! Answers jumbled. Try again →
+              <button onClick={()=>{setChosen(null);setShowHint(false);}} style={{marginLeft:7,fontFamily:"'Cinzel'",fontSize:9,padding:"2px 8px",
+                background:`${C.hp}30`,border:`1px solid ${C.hp}`,color:C.hp,borderRadius:3,cursor:"pointer"}}>RETRY</button>
+            </div>}
+            {chosen&&chosen===activeQ.correct&&activeQ.explanation&&<div style={{marginTop:7,background:"#27ae6015",border:"1px solid #27ae6040",
+              borderRadius:4,padding:"7px 10px",fontFamily:"'Crimson Text'",color:"#1a4a2a",fontSize:11,lineHeight:1.5}}>
+              ✓ {activeQ.explanation}
+            </div>}
+          </ParchmentCard>
+        )}
+        {!showOrient&&!activeQ&&<div style={{textAlign:"center",padding:"4px 0"}}>
+          <div style={{fontFamily:"'Crimson Text'",fontStyle:"italic",color:C.moon,fontSize:12,marginBottom:8}}>
+            {allCleared?"All corners cleared! Walk north (▲) through the exit.":"Move with the arrows — walk to a corner (?) to trigger a puzzle."}
+          </div>
+          <ArrowPad onMove={handleMove} disabled={moving} availDirs={availDirs}/>
+        </div>}
+      </div>
+      {showReward&&<RewardOverlay xp={activeQ?.xp} gold={activeQ?.gold} isBoss={activeQ?.boss} onContinue={handleRewardContinue}/>}
+    </div>
+  );
+}
+
+// ─── TITLE SCREEN ────────────────────────────────────────────────────────────
+function TitleScreen({onStart}){
+  return <div style={{width:"100vw",height:"100vh",background:C.void,display:"flex",flexDirection:"column",
+    alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+    {STARS.map((s,i)=><div key={i} className="pulse" style={{position:"absolute",
+      top:`${s.top}%`,left:`${s.left}%`,width:s.w,height:s.h,background:C.moon,borderRadius:"50%",
+      opacity:s.op,animationDelay:`${s.delay}s`,animationDuration:`${s.dur}s`}}/>)}
+    <svg viewBox="0 0 800 200" style={{position:"absolute",bottom:0,left:0,right:0,width:"100%",opacity:.55}}>
+      <polygon points="0,200 80,80 160,140 240,60 320,110 400,40 480,100 560,50 640,120 720,70 800,130 800,200" fill={C.mist}/>
+      <polygon points="0,200 60,120 140,160 220,100 300,140 380,80 460,130 540,90 620,150 700,100 800,160 800,200" fill={C.stone1}/>
+    </svg>
+    <div style={{position:"absolute",bottom:20,left:"20%"}}>
+      <div style={{width:3,height:40,background:"#5a4020",margin:"0 auto"}}/>
+      <div className="flicker" style={{width:14,height:18,background:`radial-gradient(${C.flame},${C.torch},transparent)`,margin:"-4px auto 0",filter:"blur(1px)"}}/>
+    </div>
+    <div style={{position:"absolute",bottom:20,right:"20%"}}>
+      <div style={{width:3,height:40,background:"#5a4020",margin:"0 auto"}}/>
+      <div className="flicker" style={{width:14,height:18,background:`radial-gradient(${C.flame},${C.torch},transparent)`,margin:"-4px auto 0",filter:"blur(1px)"}}/>
+    </div>
+    <div className="fade-in" style={{textAlign:"center",position:"relative",zIndex:10}}>
+      <div style={{fontFamily:"'Cinzel'",fontSize:10,letterSpacing:6,color:C.torch,marginBottom:6,textTransform:"uppercase"}}>CAT LRDI · THE GAME</div>
+      <h1 style={{fontFamily:"'Cinzel'",fontWeight:900,fontSize:"clamp(32px,7vw,64px)",
+        color:C.parchment,letterSpacing:4,lineHeight:1.1,textShadow:`0 0 40px ${C.torch}80,0 2px 4px #00000080`}}>
+        DILR<br/><span style={{color:C.gold,fontSize:"0.68em"}}>DUNGEON</span>
+      </h1>
+      <div style={{fontFamily:"'Crimson Text'",fontStyle:"italic",color:C.moon,fontSize:14,margin:"10px 0 28px"}}>
+        Conquer the Cave of Logic
+      </div>
+      <button onClick={onStart} style={{fontFamily:"'Cinzel'",fontSize:13,letterSpacing:3,padding:"13px 36px",
+        background:`linear-gradient(135deg,${C.torch},${C.gold})`,border:"none",color:C.ink,borderRadius:4,cursor:"pointer",
+        textTransform:"uppercase",boxShadow:`0 0 28px ${C.torch}60`,fontWeight:700}}>
+        ⚔ Enter the Dungeon
+      </button>
+    </div>
+  </div>;
+}
+
+// ─── MAP SCREEN ───────────────────────────────────────────────────────────────
+function MapScreen({onSelectLevel,totalXp,totalGold}){
+  return <div style={{width:"100vw",height:"100vh",background:`radial-gradient(ellipse at 50% 30%,${C.mist},${C.void})`,
+    display:"flex",flexDirection:"column",alignItems:"center",padding:"36px 18px",overflow:"auto"}}>
+    <div style={{fontFamily:"'Cinzel'",color:C.torch,fontSize:9,letterSpacing:4,marginBottom:6}}>DUNGEON MAP</div>
+    <h2 style={{fontFamily:"'Cinzel'",color:C.parchment,fontSize:26,marginBottom:4}}>Choose Your Floor</h2>
+    <div style={{display:"flex",gap:18,fontFamily:"'Courier Prime'",fontSize:12,marginBottom:30}}>
+      <span style={{color:C.xp}}>⚡ {totalXp} XP</span>
+      <span style={{color:C.gold}}>🪙 {totalGold}</span>
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:16,width:"100%",maxWidth:500}}>
+      {LEVELS.map((lvl,i)=>(
+        <div key={lvl.id} className="fade-in" onClick={()=>onSelectLevel(lvl)}
+          style={{animationDelay:`${i*.14}s`,background:`linear-gradient(135deg,${C.stone2},${C.stone1})`,
+            border:`1.5px solid ${lvl.color}40`,borderRadius:9,padding:"18px 20px",cursor:"pointer",transition:"transform .2s,box-shadow .2s"}}
+          onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow=`0 8px 28px ${lvl.color}30`}}
+          onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none"}}>
+          <div style={{fontFamily:"'Cinzel'",color:lvl.color,fontSize:9,letterSpacing:3,marginBottom:3}}>FLOOR {lvl.id}</div>
+          <div style={{fontFamily:"'Cinzel'",color:C.parchment,fontSize:18,fontWeight:700}}>{lvl.name}</div>
+          <div style={{fontFamily:"'Crimson Text'",fontStyle:"italic",color:C.moon,fontSize:12,marginTop:2,marginBottom:10}}>{lvl.subtitle}</div>
+          <div style={{fontFamily:"'Crimson Text'",color:`${C.moon}bb`,fontSize:12,lineHeight:1.5,borderTop:`1px solid ${lvl.color}20`,paddingTop:8}}>{lvl.lore}</div>
+          <div style={{display:"flex",gap:10,marginTop:10}}>
+            {lvl.sets.map(s=><div key={s.id} style={{padding:"3px 9px",background:`${lvl.color}15`,border:`1px solid ${lvl.color}40`,
+              borderRadius:3,fontFamily:"'Courier Prime'",fontSize:9,color:lvl.color}}>{s.icon} {s.name}</div>)}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+// ─── SET SELECT SCREEN ───────────────────────────────────────────────────────
+function SetSelectScreen({level,onSelectSet,onBack}){
+  return <div style={{width:"100vw",height:"100vh",background:`linear-gradient(180deg,${C.stone1},${C.void})`,
+    display:"flex",flexDirection:"column",alignItems:"center",padding:"32px 18px",overflow:"auto"}}>
+    <button onClick={onBack} style={{alignSelf:"flex-start",marginBottom:18,fontFamily:"'Cinzel'",fontSize:11,
+      color:C.moon,background:"none",border:`1px solid ${C.stone3}`,padding:"5px 12px",borderRadius:4,cursor:"pointer"}}>← Back</button>
+    <div style={{fontFamily:"'Cinzel'",color:level.color,fontSize:9,letterSpacing:4}}>FLOOR {level.id} — {level.subtitle.toUpperCase()}</div>
+    <h2 style={{fontFamily:"'Cinzel'",color:C.parchment,fontSize:24,margin:"7px 0 24px"}}>{level.name}</h2>
+    <div style={{display:"flex",flexDirection:"column",gap:14,width:"100%",maxWidth:500}}>
+      {level.sets.map((s,i)=>(
+        <div key={s.id} className="slide-up" onClick={()=>onSelectSet(s)}
+          style={{animationDelay:`${i*.1}s`,background:`linear-gradient(135deg,${C.stone2},${C.stone1})`,
+            border:`1.5px solid ${level.color}50`,borderRadius:9,padding:"16px 18px",cursor:"pointer",transition:"all .2s"}}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=level.color;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=`${level.color}50`;}}>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:26}}>{s.icon}</span>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Cinzel'",color:C.parchment,fontSize:15,fontWeight:700}}>{s.name}</div>
+              <div style={{fontFamily:"'Courier Prime'",color:C.moon,fontSize:10,marginTop:2}}>{s.source}</div>
+              <div style={{display:"flex",gap:7,marginTop:5}}>
+                <span style={{padding:"2px 7px",background:`${level.color}20`,border:`1px solid ${level.color}40`,
+                  borderRadius:3,fontFamily:"'Courier Prime'",fontSize:8,color:level.color}}>{s.shape}</span>
+                <span style={{padding:"2px 7px",background:C.stone3,borderRadius:3,fontFamily:"'Courier Prime'",fontSize:8,color:C.moon}}>{s.rooms.length} rooms</span>
+              </div>
+            </div>
+            <div style={{fontFamily:"'Cinzel'",color:level.color,fontSize:18}}>▶</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+// ─── ROOT ────────────────────────────────────────────────────────────────────
+export default function DilrDungeon(){
+  const [screen,setScreen]=useState("title");
+  const [activeLevel,setActiveLevel]=useState(null);
+  const [activeSet,setActiveSet]=useState(null);
+  const [setCompleteData,setSetCompleteData]=useState(null);
+  const [gs,setGs]=useState({lives:5,xp:0,gold:0,hintsLeft:3});
+
+  useEffect(()=>{const s=document.createElement("style");s.textContent=css;document.head.appendChild(s);return()=>document.head.removeChild(s);},[]);
+
+  if(screen==="title") return <TitleScreen onStart={()=>setScreen("map")}/>;
+  if(screen==="map") return <MapScreen totalXp={gs.xp} totalGold={gs.gold} onSelectLevel={lvl=>{setActiveLevel(lvl);setScreen("set-select");}}/>;
+  if(screen==="set-select") return <SetSelectScreen level={activeLevel} onBack={()=>setScreen("map")}
+    onSelectSet={set=>{setActiveSet(set);setGs(s=>({...s,lives:5,hintsLeft:3}));setScreen("puzzle");}}/>;
+  if(screen==="puzzle"&&activeSet) return <PuzzleScreen level={activeLevel} set={activeSet} gs={gs} setGs={setGs}
+    onComplete={(xp,gold)=>{setSetCompleteData({xp,gold});setScreen("set-complete");}}/>;
+  if(screen==="set-complete") return <SetCompleteScreen set={activeSet} level={activeLevel}
+    xpEarned={setCompleteData?.xp||0} goldEarned={setCompleteData?.gold||0} onContinue={()=>setScreen("map")}/>;
+  return null;
+}
